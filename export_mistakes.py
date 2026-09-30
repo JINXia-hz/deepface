@@ -5,7 +5,7 @@ from net import Net
 
 
 def save_grid(images, path, nrow):
-    grid = torch.stack(images) * 0.5 + 0.5  # 反归一化回 [0,1]
+    grid = torch.stack(images) * 0.5 + 0.5  # denormalize back to [0,1]
     torchvision.utils.save_image(grid, path, nrow=nrow, padding=2)
 
 
@@ -22,8 +22,8 @@ def main():
             fn_images += list(inputs[(predicted == 0) & (labels == 1)])
             fp_images += list(inputs[(predicted == 1) & (labels == 0)])
 
-    print(f"FN（漏检的真脸）: {len(fn_images)} 张，展示前 98 张")
-    print(f"FP（误报的非脸）: {len(fp_images)} 张")
+    print(f"FN: {len(fn_images)} ")
+    print(f"FP: {len(fp_images)} ")
 
     save_grid(fn_images[:98], 'mistakes_fn.png', nrow=14)
     if fp_images:
