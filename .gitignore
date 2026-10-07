@@ -1,4 +1,4 @@
 __pycache__/
-*.pth
 train_images/
 test_images/
+*.png
