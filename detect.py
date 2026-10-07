@@ -11,19 +11,19 @@ base_transform = transforms.Compose([
 ])
 
 def equalize_patches(patches):
-    # 向量化复现 ImageOps.equalize（逐窗口），并接上 Normalize(0.5, 0.5)
-    # patches: [N, 1, 36, 36]，值域 [0, 1]
+    # Vectorized reimplementation of ImageOps.equalize (per window), followed by Normalize(0.5, 0.5)
+    # patches: [N, 1, 36, 36], value range [0, 1]
     N = patches.size(0)
     q = (patches * 255).round().long().reshape(N, -1)
     hist = torch.zeros(N, 256, dtype=torch.long)
     hist.scatter_add_(1, q, torch.ones_like(q))
     nonzero = hist != 0
-    last_idx = 255 - nonzero.flip(1).long().argmax(1)   # 最后一个非零桶
+    last_idx = 255 - nonzero.flip(1).long().argmax(1)   # last non-zero bin
     last_cnt = hist.gather(1, last_idx.unsqueeze(1)).squeeze(1)
     step = (hist.sum(1) - last_cnt) // 255
-    identity = (nonzero.sum(1) <= 1) | (step == 0)      # 退化窗口：恒等映射
+    identity = (nonzero.sum(1) <= 1) | (step == 0)      # degenerate window: identity mapping
     step = step.clamp(min=1).unsqueeze(1)
-    csum = hist.cumsum(1) - hist                        # 不含自身的前缀和
+    csum = hist.cumsum(1) - hist                        # exclusive prefix sum
     lut = ((step // 2 + csum) // step).clamp(max=255)
     lut = torch.where(identity.unsqueeze(1), torch.arange(256).expand(N, 256), lut)
     out = lut.gather(1, q).float() / 255.0
