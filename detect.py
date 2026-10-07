@@ -1,5 +1,5 @@
 import sys                                                                            
-from PIL import Image, ImageOps, ImageDraw                                                      
+from PIL import Image, ImageDraw                                                      
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -10,12 +10,24 @@ base_transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
-window_transform = transforms.Compose([
-    transforms.Lambda(ImageOps.equalize),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=(0.5,), std=(0.5,)),
-])
-to_pil = transforms.ToPILImage()                                                                                    
+def equalize_patches(patches):
+    # 向量化复现 ImageOps.equalize（逐窗口），并接上 Normalize(0.5, 0.5)
+    # patches: [N, 1, 36, 36]，值域 [0, 1]
+    N = patches.size(0)
+    q = (patches * 255).round().long().reshape(N, -1)
+    hist = torch.zeros(N, 256, dtype=torch.long)
+    hist.scatter_add_(1, q, torch.ones_like(q))
+    nonzero = hist != 0
+    last_idx = 255 - nonzero.flip(1).long().argmax(1)   # 最后一个非零桶
+    last_cnt = hist.gather(1, last_idx.unsqueeze(1)).squeeze(1)
+    step = (hist.sum(1) - last_cnt) // 255
+    identity = (nonzero.sum(1) <= 1) | (step == 0)      # 退化窗口：恒等映射
+    step = step.clamp(min=1).unsqueeze(1)
+    csum = hist.cumsum(1) - hist                        # 不含自身的前缀和
+    lut = ((step // 2 + csum) // step).clamp(max=255)
+    lut = torch.where(identity.unsqueeze(1), torch.arange(256).expand(N, 256), lut)
+    out = lut.gather(1, q).float() / 255.0
+    return (out.view_as(patches) - 0.5) / 0.5
 
 STRIDE = 8
 THRESHOLD = 0.995
@@ -54,7 +66,7 @@ for i, (t, scale) in enumerate(pyramid):
     probs = []
     with torch.no_grad():
         for s in range(0, patches.size(0), BATCH_SIZE):
-            chunk = torch.stack([window_transform(to_pil(p)) for p in patches[s:s + BATCH_SIZE]])
+            chunk = equalize_patches(patches[s:s + BATCH_SIZE])
             probs.append(torch.softmax(net(chunk), dim=1)[:, 1])
     probs = torch.cat(probs) if probs else torch.empty(0)
     keep = probs >= THRESHOLD                                                             
