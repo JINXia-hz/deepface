@@ -10,7 +10,6 @@ def get_data_loaders(batch_size=128, valid_size=0.2):
 
     transform = transforms.Compose(
         [transforms.Grayscale(), 
-         transforms.Lambda(ImageOps.equalize),
          transforms.ToTensor(), 
          transforms.Normalize(mean=(0.5,),std=(0.5,))])
 

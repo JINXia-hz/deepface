@@ -36,4 +36,4 @@ def train(net, trainloader, validloader, criterion, lr=0.01, momentum=0.9, epoch
 
 if __name__ == '__main__':
     train(net, train_loader, valid_loader, criterion, epochs=int(sys.argv[1]))
-    torch.save(net.state_dict(), 'model.pth')
+    torch.save(net.state_dict(), 'model_noeq.pth')
