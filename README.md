@@ -17,7 +17,7 @@ Detect all faces in any image using a CNN binary classifier (36×36 grayscale in
 ├── train_images/       # Training set (0=non-face, 1=face, 36×36)
 ├── test_images/        # Test set
 ├── samples/            # Sample images to detect on
-└── outputs/            # Detection outputs (detect_output.png, etc.)
+└── outputs/            # Detection outputs (<name>_<n>faces.png, etc.)
 ```
 
 ## Usage
@@ -25,7 +25,7 @@ Detect all faces in any image using a CNN binary classifier (36×36 grayscale in
 ```bash
 py train.py 10                        # Train for 10 epochs, saves models/model_noeq.pth
 py test.py                            # Evaluate on the test set
-py detect_heatmap.py samples/test.jpg # Detect; draws boxes and saves outputs/detect_output.png
+py detect_heatmap.py samples/test.jpg # Detect; draws boxes and saves outputs/test_3faces.png
 py export_mistakes.py                 # Export misclassified samples
 ```
 
