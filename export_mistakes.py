@@ -12,7 +12,7 @@ def save_grid(images, path, nrow):
 def main():
     _, _, test_loader = load_data.get_data_loaders(batch_size=128)
     net = Net()
-    net.load_state_dict(torch.load('model.pth'))
+    net.load_state_dict(torch.load('models/model_noeq.pth'))
     net.eval()
 
     fn_images, fp_images = [], []
@@ -25,9 +25,9 @@ def main():
     print(f"FN: {len(fn_images)} ")
     print(f"FP: {len(fp_images)} ")
 
-    save_grid(fn_images[:98], 'mistakes_fn.png', nrow=14)
+    save_grid(fn_images[:98], 'outputs/mistakes_fn.png', nrow=14)
     if fp_images:
-        save_grid(fp_images, 'mistakes_fp.png', nrow=max(len(fp_images), 1))
+        save_grid(fp_images, 'outputs/mistakes_fp.png', nrow=max(len(fp_images), 1))
 
 
 if __name__ == '__main__':

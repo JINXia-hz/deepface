@@ -1,3 +1,4 @@
+import os
 import sys
 
 import load_data
@@ -7,7 +8,9 @@ import torch.nn as nn
 from net import Net
 from test import evaluate
 
-train_loader, valid_loader, _ = load_data.get_data_loaders(batch_size=128, valid_size=0.2)
+torch.set_num_threads(os.cpu_count() or 1)
+
+train_loader, valid_loader, _ = load_data.get_data_loaders(batch_size=256, valid_size=0.2)
 
 net = Net()
 criterion = nn.CrossEntropyLoss(reduction='none')
@@ -36,4 +39,4 @@ def train(net, trainloader, validloader, criterion, lr=0.01, momentum=0.9, epoch
 
 if __name__ == '__main__':
     train(net, train_loader, valid_loader, criterion, epochs=int(sys.argv[1]))
-    torch.save(net.state_dict(), 'model_noeq.pth')
+    torch.save(net.state_dict(), 'models/model_noeq.pth')

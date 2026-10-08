@@ -30,7 +30,7 @@ while min(w, h) >= 36:
 
 # load the pre-trained model
 net = Net()
-net.load_state_dict(torch.load('model_noeq.pth'))
+net.load_state_dict(torch.load('models/model_noeq.pth'))
 net.eval()
 fc_w = net.fc.weight.view(2,64,1,1)
 fc_b = net.fc.bias
@@ -40,7 +40,7 @@ boxes = [] # list of detected boxes
 for t, scale in pyramid:
     with torch.no_grad():
         f = net.features(t.unsqueeze(0))  # [1, 64, H', W']
-        f = F.avg_pool2d(f, kernel_size=4)
+        f = F.avg_pool2d(f, kernel_size=4, stride=1)
         logits = F.conv2d(f, fc_w, fc_b)
         heatmap = torch.softmax(logits, dim=1)[0, 1]  # [H', W']
         ys, xs = torch.nonzero(heatmap >= THRESHOLD, as_tuple=True)
@@ -60,10 +60,10 @@ for x1, y1, x2, y2, _ in boxes:
 import time
 for attempt in range(5):
     try:
-        img.save('detect_output.png')
+        img.save('outputs/detect_output.png')
         break
     except OSError:
         time.sleep(1)
 else:
-    img.save('detect_output_alt.png')
+    img.save('outputs/detect_output_alt.png')
 print(f"detected {len(boxes)} faces")

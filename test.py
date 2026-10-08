@@ -27,5 +27,5 @@ def evaluate(net, tag, loader):
 if __name__ == '__main__':
     _, _, test_loader = load_data.get_data_loaders(batch_size=128)
     net = Net()
-    net.load_state_dict(torch.load('model.pth'))
+    net.load_state_dict(torch.load('models/model_noeq.pth'))
     evaluate(net, 'final test', test_loader)
