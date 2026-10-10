@@ -3,3 +3,5 @@ train_images/
 test_images/
 *.png
 *.jpg
+data/
+outputs/

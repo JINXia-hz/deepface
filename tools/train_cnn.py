@@ -1,19 +1,21 @@
 import os
 import sys
 
-import load_data
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from net import Net
-from test import evaluate
+
+from deepface.data import get_data_loaders
+from deepface.models import Net
+from deepface.evaluate import evaluate
 
 torch.set_num_threads(os.cpu_count() or 1)
 
-train_loader, valid_loader, _ = load_data.get_data_loaders(batch_size=256, valid_size=0.2)
+train_loader, valid_loader, _ = get_data_loaders(batch_size=256, valid_size=0.2)
 
 net = Net()
 criterion = nn.CrossEntropyLoss(reduction='none')
+
 
 def train(net, trainloader, validloader, criterion, lr=0.01, momentum=0.9, epochs=10):
     optimizer = optim.SGD(net.parameters(), lr=lr, momentum=momentum)
