@@ -11,8 +11,8 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── models.py       # Net (36×36 window classifier) + ResUNet (dense score map) + load_model()
 │   ├── data.py         # Crop dataset loading (preloaded into memory, train/valid/test DataLoaders)
 │   ├── wider.py        # WIDER FACE annotation parsing, scene tile samplers, stride-8/stride-1 labels
-│   ├── detect.py       # Pyramid scanning for both backends, weighted/cluster NMS, detect()
-│   └── evaluate.py     # Crop metrics, eval job lists, WIDER held-out recall
+│   ├── detect.py       # Pyramid scanning for both backends, weighted/cluster NMS, box calibration, detect()
+│   └── evaluate.py     # Crop metrics, eval job lists, WIDER held-out recall, official WIDER AP protocol
 ├── tools/              # Executable scripts (run from repo root: py -m tools.<name>)
 │   ├── detect.py           # Detect one image: py -m tools.detect <img> [model] [thr]
 │   ├── train_cnn.py        # Train the small CNN: py -m tools.train_cnn <epochs>
@@ -23,7 +23,9 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── eval_fcn.py         # Full evaluation (test crops / holdout FPs / samples / WIDER recall)
 │   ├── cache_candidates.py # Cache low-threshold candidates: <model> <out.pt>
 │   ├── sweep.py            # Threshold × NMS sweep on cached candidates
-│   └── measure_kernel.py   # Importance kernel / response envelope / GT face spacing
+│   ├── measure_kernel.py   # Importance kernel / response envelope / GT face spacing
+│   ├── eval_wider.py       # Official WIDER val: scan (multiprocess, caches raw candidates) + per-tier AP
+│   └── calibrate_box.py    # Box shape calibration grid search on cached detections
 ├── models/             # Trained model weights
 │   ├── model.pth       # Legacy model (trained with per-window histogram equalization, test 98.77%)
 │   ├── model_noeq.pth  # Baseline (no equalization, test 97.93%)
@@ -117,3 +119,40 @@ Result at matched false positives — the capacity hypothesis confirmed:
 | model_deep @ 0.8 | 39 | **0.617** |
 
 Default threshold 0.85 (`deepface/detect.py` BACKENDS) trades some recall for clean output on non-photographic images: 16 holdout FPs, recall 0.542, samples 1/1/17/1. Cost: ~8 s/image on CPU (about an order of magnitude slower than the tiny Net) and ~2.8 h of CPU training.
+
+## Official WIDER FACE Val Evaluation
+
+Full official protocol (`tools/eval_wider.py`, a faithful port of the eval_tools MATLAB code: greedy matching at IoU 0.5, off-tier matches ignored, global min-max score normalization, VOC all-point AP) over all 3226 val images, Easy/Medium/Hard tiers (cumulative):
+
+| tier | AP | precision@0.85 | recall@0.85 |
+|---|---|---|---|
+| Easy | 0.559 | 0.60 | 0.58 |
+| Medium | 0.536 | 0.71 | 0.51 |
+| Hard | 0.231 | 0.71 | 0.22 |
+
+Roughly 2015-era Faceness-Net territory — reasonable for a 549k-parameter grayscale CPU model, far from SOTA (~0.97/0.96/0.90) whose advantage is almost entirely in sub-24px faces. Two lessons from the evaluation itself:
+
+1. **Weighted-average NMS drifts.** Merging each cluster by score-weighted averaging (our previous default) smears box positions when thousands of low-score candidates join a cluster, wrecking IoU. Keeping the argmax position (`std` NMS) and sweeping the score threshold afterwards lifted easy-tier AP from 0.007 to 0.559 on identical score maps. Raw candidates are cached (`outputs/cache/wider_cands/`, 3.2GB), so NMS/threshold variants re-evaluate in minutes.
+2. **Box shape calibration.** WIDER faces are ~1.26× taller than wide (train-set median h/w) while the detector emits squares. Stretching box height ×1.25 (no vertical shift; matches train stats, so not val overfitting) lifts AP on every tier:
+
+| tier | square | calibrated ×1.25 |
+|---|---|---|
+| Easy | 0.559 | **0.643** |
+| Medium | 0.536 | **0.572** |
+| Hard | 0.231 | **0.240** |
+
+The calibration is applied in `detect()` (`BOX_CALIBR` in `deepface/detect.py`).
+
+Remaining failure modes, by face size: <24px faces are physically unreachable (36px minimum window) — that is ~2/3 of all GT and caps Hard AP; >224px faces sit at pyramid depths where the face-to-context ratio leaves the training distribution and the network never fires; the 96–144px band is the sweet spot.
+
+## Failed Experiment: Upscale Pyramid
+
+Zero-training attempt at the tiny-face problem: extend the pyramid *upward* (scales 0.30–0.92, i.e. 1.1×–3.3× enlargement, coarse 1.25 ladder, tiled forward pass to cap RAM) so 8–26px faces enter the detectable band. On a stratified 244-image sample, tiny-face recall genuinely doubled (hard-tier recall@0.8: 0.22 → 0.42), but the upscaled levels flooded the output with false positives (~9× more detections at score ≥ 0.8): wrong-scale duplicates of already-detected faces, plus texture FPs — bilinear-upscaled noise at 3× is apparently face-like enough for the network at the 36px window scale. A cascade filter (drop upscale detections overlapping any base-pyramid detection) plus a separate score threshold for upscale detections never recovered the loss:
+
+| config | easy | medium | hard |
+|---|---|---|---|
+| base | **0.538** | **0.518** | **0.220** |
+| + upscale, cascade, thr 0.2 | 0.505 | 0.474 | 0.211 |
+| + upscale, cascade, thr 0.95 | 0.531 | 0.511 | 0.221 |
+
+Conclusion: at these sizes the signal is gone, not merely under-thresholded — direction abandoned. Infrastructure remains in place (`pyramid(min_scale=...)`, `_dense_peaks_tiled`, `tools/eval_wider.py --up/--sample`) if a better model ever justifies it.

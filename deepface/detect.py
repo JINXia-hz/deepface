@@ -18,15 +18,46 @@ BACKENDS = {
     'deep': dict(thr=0.85, ratio=1.1, floor=0.05),
 }
 
+# box shape calibration (w-scale, h-scale, dy in box-side units): WIDER faces
+# are ~1.26x taller than wide (train-set stats); lifts easy AP 0.559 -> 0.643
+BOX_CALIBR = (1.0, 1.25, 0.0)
 
-def pyramid(img, ratio, min_side=WINDOW):
-    """Yield (normalized tensor [1,H,W], scale) for each pyramid level."""
-    scale = 1.0
-    w, h = img.size
-    while min(w, h) >= min_side:
-        yield GRAY(img.resize((int(w), int(h)), Image.BILINEAR)), scale
-        w, h = w / ratio, h / ratio
-        scale *= ratio
+
+def calibrate_boxes(det, calibr=BOX_CALIBR):
+    """Reshape square boxes (side L, center cx,cy) to a*L wide, b*L tall,
+    center shifted down by c*L."""
+    a, b, c = calibr
+    if len(det) == 0 or (a, b, c) == (1.0, 1.0, 0.0):
+        return det
+    det = det.clone()
+    L = det[:, 2] - det[:, 0]
+    cx = (det[:, 0] + det[:, 2]) / 2
+    cy = (det[:, 1] + det[:, 3]) / 2 + c * L
+    det[:, 0], det[:, 2] = cx - a * L / 2, cx + a * L / 2
+    det[:, 1], det[:, 3] = cy - b * L / 2, cy + b * L / 2
+    return det
+
+
+def pyramid(img, ratio, min_side=WINDOW, min_scale=1.0, max_scale=None, max_side=4608):
+    """Yield (normalized tensor [1,H,W], scale) for each pyramid level.
+    scale maps level px -> original px: >1 downscaled, <1 upscaled. Upscale
+    levels (min_scale < 1, added for tiny faces) stop below 1.0; levels whose
+    resized image exceeds max_side are skipped."""
+    W, H = img.size
+    scales = []
+    s = min_scale
+    while s < 1.0 and (max_scale is None or s <= max_scale):
+        scales.append(s)
+        s *= ratio
+    if max_scale is None or max_scale >= 1.0:
+        s = 1.0
+        while min(W / s, H / s) >= min_side and (max_scale is None or s <= max_scale):
+            scales.append(s)
+            s *= ratio
+    for s in scales:
+        w, h = int(W / s), int(H / s)
+        if max(w, h) <= max_side:
+            yield GRAY(img.resize((w, h), Image.BILINEAR)), s
 
 
 def scan_heatmap(net, img, thr, ratio=BACKENDS['heatmap']['ratio']):
@@ -47,18 +78,62 @@ def scan_heatmap(net, img, thr, ratio=BACKENDS['heatmap']['ratio']):
     return torch.tensor(out) if out else torch.zeros(0, 5)
 
 
-def scan_dense(net, img, thr, ratio=BACKENDS['deep']['ratio']):
-    """ResUNet backend: per-pixel score map. Each 3x3 local maximum >= thr
-    becomes a 36px box centered on the peak. Returns [N,5]."""
+def _dense_peaks(net, t, thr):
+    """3x3 local maxima >= thr on the sigmoid score map of tensor [1,H,W].
+    Returns (xs, ys, scores) lists."""
+    with torch.no_grad():
+        prob = torch.sigmoid(net(t.unsqueeze(0)))[0, 0]
+        peaks = (prob == F.max_pool2d(prob[None, None], 3, stride=1, padding=1)[0, 0]) \
+                & (prob >= thr)
+        ys, xs = torch.nonzero(peaks, as_tuple=True)
+        scores = prob[ys, xs]
+    return xs.tolist(), ys.tolist(), scores.tolist()
+
+
+TILE_PX = 2_000_000   # levels larger than this are forwarded in tiles (RAM cap)
+TILE, TILE_MARGIN = 896, 64   # tile size and overlap margin (>= receptive field 60)
+
+
+def _axis_tiles(L, tile, margin):
+    """Partition [0,L) into cores of width tile-2*margin; each core's tile is
+    the core expanded by margin, clipped to [0,L]."""
+    step = tile - 2 * margin
     out = []
-    for t, s in pyramid(img, ratio):
-        with torch.no_grad():
-            prob = torch.sigmoid(net(t.unsqueeze(0)))[0, 0]
-            peaks = (prob == F.max_pool2d(prob[None, None], 3, stride=1, padding=1)[0, 0]) \
-                    & (prob >= thr)
-            ys, xs = torch.nonzero(peaks, as_tuple=True)
-            scores = prob[ys, xs]
-        for x, y, p in zip(xs.tolist(), ys.tolist(), scores.tolist()):
+    c0 = 0
+    while c0 < L:
+        c1 = min(c0 + step, L)
+        out.append((max(c0 - margin, 0), min(c1 + margin, L), c0, c1))
+        c0 = c1
+    return out
+
+
+def _dense_peaks_tiled(net, t, thr):
+    """_dense_peaks through an overlapping-tile forward for large levels.
+    Each peak is kept only in its tile's core zone, so coverage is exact."""
+    _, H, W = t.shape
+    if H * W <= TILE_PX:
+        return _dense_peaks(net, t, thr)
+    xs_all, ys_all, ps_all = [], [], []
+    for y0, y1, cy0, cy1 in _axis_tiles(H, TILE, TILE_MARGIN):
+        for x0, x1, cx0, cx1 in _axis_tiles(W, TILE, TILE_MARGIN):
+            xs, ys, ps = _dense_peaks(net, t[:, y0:y1, x0:x1], thr)
+            for x, y, p in zip(xs, ys, ps):
+                gx, gy = x + x0, y + y0
+                if cx0 <= gx < cx1 and cy0 <= gy < cy1:
+                    xs_all.append(gx)
+                    ys_all.append(gy)
+                    ps_all.append(p)
+    return xs_all, ys_all, ps_all
+
+
+def scan_dense(net, img, thr, ratio=BACKENDS['deep']['ratio'], min_scale=1.0, max_scale=None):
+    """ResUNet backend: per-pixel score map. Each 3x3 local maximum >= thr
+    becomes a 36px box centered on the peak. Returns [N,5].
+    min_scale < 1 adds upscale pyramid levels (for tiny faces)."""
+    out = []
+    for t, s in pyramid(img, ratio, min_scale=min_scale, max_scale=max_scale):
+        xs, ys, ps = _dense_peaks_tiled(net, t, thr)
+        for x, y, p in zip(xs, ys, ps):
             out.append(((x - WINDOW / 2) * s, (y - WINDOW / 2) * s,
                         (x + WINDOW / 2) * s, (y + WINDOW / 2) * s, p))
     return torch.tensor(out) if out else torch.zeros(0, 5)
@@ -145,4 +220,4 @@ def detect(net, img, backend, thr=None):
     cands = SCANNERS[backend](net, img, thr if thr is not None else cfg['thr'], cfg['ratio'])
     if len(cands) == 0:
         return cands
-    return weighted_nms(cands[:, :4], cands[:, 4], 0.2)
+    return calibrate_boxes(weighted_nms(cands[:, :4], cands[:, 4], 0.2))
