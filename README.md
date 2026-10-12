@@ -182,3 +182,16 @@ With both zero-training tricks (upscale pyramid) and labeling tricks (A/B) refut
 | **D (v1 + 4000 steps)** | **0.638** | **0.602** | **0.301** | **0.80–0.86** |
 
 All three tiers improve, and precision at the default threshold jumps from 0.61 to 0.80+ — continued training mainly suppresses false positives. The continued model is now the default `models/model_deep.pth`; the 2000-step baseline is kept as `models/model_deep_v1.pth`.
+
+## Cross-Level Redundancy: Half the Pyramid Is Free, but Support Doesn't Separate FPs
+
+Two measurements on cached candidates (`tools/level_redundancy.py`, `tools/level_support.py`, 244-image sample):
+
+**Compute saving works.** A face lands in the [26,52]px positive band for ~7 consecutive levels at ladder ratio 1.1, so detections are highly redundant across levels. Dropping every other level (effective ratio 1.21, i.e. half the forward passes) costs almost nothing:
+
+| ladder | easy | medium | hard |
+|---|---|---|---|
+| ratio 1.1 (all levels) | 0.591 | 0.558 | 0.278 |
+| ratio 1.21 (even levels) | 0.569 | 0.550 | 0.274 |
+
+**Cross-level support as an FP filter fails.** The hypothesis was that a real face is corroborated by adjacent-level responses while a texture FP fires alone. In fact 91% of mid-score ([0.3,0.6)) candidates have adjacent-level support and are still ~100% FP: the network's false positives are spatially coherent face-like textures, whose responses are just as scale-smooth as real faces. Support-filter/rescue AP rules gained ≤0.001 or hurt. Direction abandoned; multi-scale consistency is a property of any coherent pattern, not of faces.
