@@ -11,7 +11,7 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── models.py       # Net (36×36 window classifier) + ResUNet (dense score map) + load_model()
 │   ├── data.py         # Crop dataset loading (preloaded into memory, train/valid/test DataLoaders)
 │   ├── wider.py        # WIDER FACE annotation parsing, scene tile samplers, stride-8/stride-1 labels
-│   ├── detect.py       # Pyramid scanning for both backends, weighted/cluster NMS, box calibration, detect()
+│   ├── detect.py       # Pyramid scanning for both backends, weighted/cluster NMS, scale refinement, box calibration, detect()
 │   └── evaluate.py     # Crop metrics, eval job lists, WIDER held-out recall, official WIDER AP protocol
 ├── tools/              # Executable scripts (run from repo root: py -m tools.<name>)
 │   ├── detect.py           # Detect one image: py -m tools.detect <img> [model] [thr]
@@ -25,7 +25,11 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── sweep.py            # Threshold × NMS sweep on cached candidates
 │   ├── measure_kernel.py   # Importance kernel / response envelope / GT face spacing
 │   ├── eval_wider.py       # Official WIDER val: scan (multiprocess, caches raw candidates) + per-tier AP
-│   └── calibrate_box.py    # Box shape calibration grid search on cached detections
+│   ├── calibrate_box.py    # Box shape calibration grid search on cached detections
+│   ├── level_redundancy.py # Cross-level redundancy: level occupancy, thinning AP
+│   ├── level_support.py    # Cross-level support as TP/FP signal (refuted)
+│   ├── scale_profile.py    # Scale-space profile shapes, TP vs FP (real but redundant)
+│   └── scale_interp.py     # Sub-grid scale interpolation on a thinned ladder
 ├── models/             # Trained model weights
 │   ├── model.pth       # Legacy model (trained with per-window histogram equalization, test 98.77%)
 │   ├── model_noeq.pth  # Baseline (no equalization, test 97.93%)
@@ -193,5 +197,10 @@ Two measurements on cached candidates (`tools/level_redundancy.py`, `tools/level
 |---|---|---|---|
 | ratio 1.1 (all levels) | 0.591 | 0.558 | 0.278 |
 | ratio 1.21 (even levels) | 0.569 | 0.550 | 0.274 |
+| ratio 1.21 + sub-grid interpolation | **0.602** | **0.571** | **0.285** |
+
+Sub-grid interpolation (`tools/scale_interp.py`, integrated as `scale_refine` in `deepface/detect.py`): fit a parabola to each detection's log-score profile along the ladder and move the box to the fractional peak scale. It not only recovers the thinning loss but beats the full ladder — the 1.1 grid's ±10% size quantization was itself an IoU loss source. The default ladder is now ratio 1.21 (~2x fewer forward passes) with refinement on top.
 
 **Cross-level support as an FP filter fails.** The hypothesis was that a real face is corroborated by adjacent-level responses while a texture FP fires alone. In fact 91% of mid-score ([0.3,0.6)) candidates have adjacent-level support and are still ~100% FP: the network's false positives are spatially coherent face-like textures, whose responses are just as scale-smooth as real faces. Support-filter/rescue AP rules gained ≤0.001 or hurt. Direction abandoned; multi-scale consistency is a property of any coherent pattern, not of faces.
+
+**Profile *shape* is real but redundant** (`tools/scale_profile.py`). Treating the response as a continuous scale-space field f(x, y, log s), a true face is an asymmetric bump: fast decay toward smaller scales (mean score ratio at -2 levels: 0.47 for TP vs 0.18 for FP), a plateau tail toward larger scales (ratio ~0.95 at +1 — consistent with the upscale-pyramid duplicates), and a stable peak position across levels (drift 0.44 box-sizes vs 0.61 for FP). The network's learned scale selectivity peaks at the small end of the band (~35-39px face-in-window: it prefers more context). However, adding these profile features to the score does not improve separation (held-out AUC 0.9938 score-only vs 0.9936 with profile; AP within noise): adjacent-level scores are computed from nearly the same pixels, so the profile is the same evidence resampled, not independent evidence.

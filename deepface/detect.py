@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
@@ -15,7 +16,9 @@ DOWNSAMPLE = 8       # Net: 3 maxpools
 # per-backend defaults: detection threshold, pyramid ratio, candidate-cache floor
 BACKENDS = {
     'heatmap': dict(thr=0.995, ratio=1.05, floor=0.85),
-    'deep': dict(thr=0.85, ratio=1.1, floor=0.05),
+    # 1.21 = every other level of the old 1.1 ladder: -0.02 AP for ~2x speed
+    # (measured in tools/level_redundancy.py; the [26,52] band is 2x wide)
+    'deep': dict(thr=0.85, ratio=1.21, floor=0.05),
 }
 
 # box shape calibration (w-scale, h-scale, dy in box-side units): WIDER faces
@@ -213,11 +216,70 @@ def weighted_nms(boxes, scores, iom=0.2):
     return cluster_nms(cands, 0.0, 'wavg', iom)
 
 
+def _iou_1xn(box, boxes):
+    x1 = np.maximum(box[0], boxes[:, 0])
+    y1 = np.maximum(box[1], boxes[:, 1])
+    x2 = np.minimum(box[2], boxes[:, 2])
+    y2 = np.minimum(box[3], boxes[:, 3])
+    inter = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)
+    a = (box[2] - box[0]) * (box[3] - box[1])
+    b = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+    return inter / np.maximum(a + b - inter, 1e-9)
+
+
+def scale_refine(det, cands, ratio):
+    """Sub-grid scale refinement: fit a parabola to each detection's log-score
+    profile along the pyramid ladder and move the box to the fractional peak
+    scale (size 36 * ratio**(k + x*)). Recovers and beats the AP lost to
+    ladder thinning — tools/scale_interp.py measured +0.01 AP over the full
+    ratio-1.1 ladder at half the forward passes."""
+    if len(det) == 0 or len(cands) == 0:
+        return det
+    cs = cands.numpy()
+    levels = np.round(np.log(np.maximum(cs[:, 2] - cs[:, 0], 1) / WINDOW)
+                      / np.log(ratio)).astype(int)
+    out = det.clone()
+    for i in range(len(out)):
+        d = out[i].numpy()
+        size = max(d[2] - d[0], 1e-6)
+        k = int(round(np.log(size / WINDOW) / np.log(ratio)))
+        pts = [(0.0, float(d[4]))]
+        for dk in (-1, 1):
+            m = levels == k + dk
+            if not m.any():
+                pts = None
+                break
+            pool = cs[m]
+            ious = _iou_1xn(d[:4], pool[:, :4])
+            j = int(ious.argmax())
+            if ious[j] < 0.2:
+                pts = None
+                break
+            pts.append((float(dk), float(pool[j, 4])))
+        if pts is None:
+            continue
+        xs = np.array([p[0] for p in pts])
+        ys = np.log(np.maximum([p[1] for p in pts], 1e-6))
+        a, b, _ = np.polyfit(xs, ys, 2)
+        if a >= 0:
+            continue
+        x_star = float(np.clip(-b / (2 * a), -1, 1))
+        cx, cy = (d[0] + d[2]) / 2, (d[1] + d[3]) / 2
+        new_size = WINDOW * ratio ** (k + x_star)
+        out[i, 0], out[i, 1] = cx - new_size / 2, cy - new_size / 2
+        out[i, 2], out[i, 3] = cx + new_size / 2, cy + new_size / 2
+    return out
+
+
 def detect(net, img, backend, thr=None):
-    """Full pipeline: pyramid scan at the backend's defaults + weighted NMS.
+    """Full pipeline: pyramid scan at the backend's defaults + weighted NMS
+    + sub-grid scale refinement + box shape calibration.
     Returns [M,5] (x1, y1, x2, y2, score)."""
     cfg = BACKENDS[backend]
     cands = SCANNERS[backend](net, img, thr if thr is not None else cfg['thr'], cfg['ratio'])
     if len(cands) == 0:
         return cands
-    return calibrate_boxes(weighted_nms(cands[:, :4], cands[:, 4], 0.2))
+    det = weighted_nms(cands[:, :4], cands[:, 4], 0.2)
+    if backend == 'deep':
+        det = scale_refine(det, cands, cfg['ratio'])
+    return calibrate_boxes(det)
