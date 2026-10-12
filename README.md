@@ -31,7 +31,7 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── model_noeq.pth  # Baseline (no equalization, test 97.93%)
 │   ├── model_fcn.pth   # FCN fine-tuned on WIDER val scenes
 │   ├── model_fcn2.pth  # FCN fine-tuned on WIDER train+val scenes, 3000 steps
-│   └── model_deep.pth  # ResUNet trained from scratch on WIDER scenes (default detector)
+│   └── model_deep.pth  # ResUNet default detector (v1 2000 steps + 4000-step continuation)
 ├── data/               # Scene data (git-ignored): COCO val2017, no_person, holdout, widerface
 ├── train_images/       # Training set (0=non-face, 1=face, 36×36)
 ├── test_images/        # Test set
@@ -156,3 +156,29 @@ Zero-training attempt at the tiny-face problem: extend the pyramid *upward* (sca
 | + upscale, cascade, thr 0.95 | 0.531 | 0.511 | 0.221 |
 
 Conclusion: at these sizes the signal is gone, not merely under-thresholded — direction abandoned. Infrastructure remains in place (`pyramid(min_scale=...)`, `_dense_peaks_tiled`, `tools/eval_wider.py --up/--sample`) if a better model ever justifies it.
+
+## Failed Experiment: Widening the Training Scale Band
+
+Training-side attempt at the same scale problem, zero extra steps. Two variants, each 2000 steps from scratch, evaluated on the same 244-image stratified val sample (std NMS, floor 0.05):
+
+- **A**: widen the positive face-size band from [26,52]px to [20,96]px (`pos_range` in `DeepSceneSampler`) so the dense detector learns more scales directly.
+- **B**: alternate 192px and 96px training tiles, mimicking the small inputs of deep pyramid levels.
+
+| model | easy | medium | hard | P@0.85 |
+|---|---|---|---|---|
+| baseline (narrow band, 192px tiles) | **0.591** | **0.558** | **0.278** | 0.61 |
+| A + B | 0.541 | 0.524 | 0.263 | 0.15 |
+| A only | 0.258 | 0.288 | 0.143 | 0.07 |
+
+A is the main poison: the narrow band is what forces sharp scale selectivity (fire only at the correct scale); widening it blurs the decision boundary and floods high-score FPs (crop center-acc also degraded 0.98 → 0.87). B partially mitigated A's damage but did not help on its own merits here. Both variants abandoned; default sampler behavior restored (widening kept as the opt-in `pos_range` parameter). The winning configuration remains the baseline recipe — scale coverage is fundamentally a data-complexity/capacity problem, not a labeling trick.
+
+## D Route: Plain Continuation Training (current default)
+
+With both zero-training tricks (upscale pyramid) and labeling tricks (A/B) refuted, the remaining lever was simply more optimization. Continuing training from the baseline weights for another 4000 steps (Adam, lr 3e-4 cosine, same recipe; `tools/train_deep.py 4000 1.0 <out> 0 models/model_deep.pth 192 3e-4`) on the same 244-image sample:
+
+| model | easy | medium | hard | P@0.85 |
+|---|---|---|---|---|
+| baseline (2000 steps) | 0.591 | 0.558 | 0.278 | 0.61 |
+| **D (v1 + 4000 steps)** | **0.638** | **0.602** | **0.301** | **0.80–0.86** |
+
+All three tiers improve, and precision at the default threshold jumps from 0.61 to 0.80+ — continued training mainly suppresses false positives. The continued model is now the default `models/model_deep.pth`; the 2000-step baseline is kept as `models/model_deep_v1.pth`.

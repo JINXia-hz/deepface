@@ -12,7 +12,6 @@ POS_MIN, POS_MAX = 26, 52   # a 36px window is a positive only for faces of this
 POS_R = 6   # deep backend: positive disk radius around each in-range face center (tile px)
 BORDER = 8  # deep backend: tile border band labeled ignore (partial context at the edge)
 
-
 def load_annotations(txt_path):
     """Parse wider_face_*_bbx_gt.txt -> {rel_path: [N,10] float32}.
 
@@ -120,6 +119,7 @@ class SceneSampler:
     def __init__(self, img_root, txt_path, tile=192, skip_images=0):
         self.img_root = img_root
         self.tile = tile
+        self.pos_min, self.pos_max = POS_MIN, POS_MAX   # positive face-size band
         ann = load_annotations(txt_path)
         self.items = []
         for rel in sorted(ann):
@@ -146,7 +146,8 @@ class SceneSampler:
                     if boxes[k, 7] == 0 and min(boxes[k, 2], boxes[k, 3]) >= 12]
         if face_idx and random.random() < 0.7:
             anchor = boxes[random.choice(face_idx)]
-            scale = random.uniform(30, 48) / min(anchor[2], anchor[3])
+            lo = min(self.pos_min + 4, self.pos_max)
+            scale = random.uniform(lo, max(lo, self.pos_max - 4)) / min(anchor[2], anchor[3])
         else:
             scale = random.uniform(0.5, 2.0)
         scale = max(scale, (self.tile + 1) / w, (self.tile + 1) / h)
@@ -177,7 +178,7 @@ class SceneSampler:
             tb.append((x1, y1, x2, y2))
             side = min(x2 - x1, y2 - y1)
             any_mask.append(boxes[k, 7] == 0 or side >= 8)
-            pos_mask.append(boxes[k, 7] == 0 and POS_MIN <= side <= POS_MAX)
+            pos_mask.append(boxes[k, 7] == 0 and self.pos_min <= side <= self.pos_max)
 
         if random.random() < 0.5:
             arr = arr[:, ::-1].copy()
@@ -221,10 +222,16 @@ class NegativeSampler:
 
 
 class DeepSceneSampler(SceneSampler):
-    """SceneSampler with stride-1 center-disk labels instead of stride-8 windows."""
+    """SceneSampler with stride-1 center-disk labels instead of stride-8 windows.
 
-    def __init__(self, *args, **kwargs):
+    Note: widening the positive band beyond [26,52] was tried (pos_range) and
+    badly hurt scale selectivity / precision — see README. Kept as an option
+    for completeness; the default matches the window semantics."""
+
+    def __init__(self, *args, pos_range=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if pos_range is not None:
+            self.pos_min, self.pos_max = pos_range
         self.label_shape = (self.tile, self.tile)
 
     def make_labels(self, tb, any_mask, pos_mask):

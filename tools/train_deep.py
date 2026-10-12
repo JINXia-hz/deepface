@@ -18,8 +18,11 @@ STEPS = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
 LAMBDA = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
 OUT = sys.argv[3] if len(sys.argv) > 3 else 'models/model_deep.pth'
 SEED = int(sys.argv[4]) if len(sys.argv) > 4 else 0
-LR = 1e-3
-TILE = 192
+INIT = sys.argv[5] if len(sys.argv) > 5 else None   # .ckpt or bare .pth to resume from
+TILES = [int(t) for t in (sys.argv[6] if len(sys.argv) > 6 else '192').split(',')]
+LR = float(sys.argv[7]) if len(sys.argv) > 7 else 1e-3
+# tile sizes alternated per step; '192,96' mixes small tiles (mimics deep pyramid
+# inputs) but that variant ('B') regressed precision — default is 192 only
 N_TRAIN, N_VAL, N_NEG = 10, 2, 4
 
 torch.manual_seed(SEED)
@@ -33,15 +36,15 @@ train_loader, valid_loader, _ = get_data_loaders(batch_size=128, valid_size=0.2)
 crop_iter = iter(train_loader)
 
 # last 200 val images are held out for scene-level evaluation
-scenes_train = DeepSceneSampler('data/widerface/WIDER_train/images',
-                                'data/widerface/wider_face_split/wider_face_train_bbx_gt.txt',
-                                tile=TILE)
+scenes_train = {t: DeepSceneSampler('data/widerface/WIDER_train/images',
+                                    'data/widerface/wider_face_split/wider_face_train_bbx_gt.txt',
+                                    tile=t) for t in TILES}
 scenes_val = DeepSceneSampler('data/widerface/WIDER_val/images',
                               'data/widerface/wider_face_split/wider_face_val_bbx_gt.txt',
-                              tile=TILE, skip_images=200)
-neg_scenes = DeepNegativeSampler('data/no_person', tile=TILE)
-print(f"wider train: {len(scenes_train.items)}, wider val: {len(scenes_val.items)}, "
-      f"no_person: {len(neg_scenes.paths)}")
+                              tile=192, skip_images=200)
+neg_scenes = {t: DeepNegativeSampler('data/no_person', tile=t) for t in TILES}
+print(f"wider train: {len(scenes_train[192].items)}, wider val: {len(scenes_val.items)}, "
+      f"no_person: {len(neg_scenes[192].paths)}")
 
 
 def focal_loss(logits, labels):
@@ -74,12 +77,30 @@ def crop_labels(clab):
 opt = optim.Adam(net.parameters(), lr=LR)
 sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=STEPS, eta_min=LR / 10)
 
+start_step = 0
+if INIT:
+    ck = torch.load(INIT, weights_only=False)
+    if isinstance(ck, dict) and 'model' in ck:   # full checkpoint with optimizer
+        net.load_state_dict(ck['model'])
+        opt.load_state_dict(ck['opt'])
+        start_step = ck['step']
+        print(f"resumed from {INIT} (step {start_step}, optimizer state restored); "
+              f"fresh cosine over {STEPS} steps")
+    else:   # bare state_dict: warm-start weights, fresh optimizer
+        net.load_state_dict(ck)
+        print(f"warm-started weights from {INIT} (fresh optimizer); "
+              f"cosine over {STEPS} steps")
+
 for step in range(1, STEPS + 1):
-    t1, l1 = scenes_train.sample_batch(N_TRAIN)
-    t2, l2 = scenes_val.sample_batch(N_VAL)
-    nt, nl = neg_scenes.sample_batch(N_NEG)
-    tiles = torch.cat([t1, t2, nt])
-    labels = torch.cat([l1, l2, nl])
+    tile = TILES[step % len(TILES)]
+    t1, l1 = scenes_train[tile].sample_batch(N_TRAIN)
+    nt, nl = neg_scenes[tile].sample_batch(N_NEG)
+    tiles = torch.cat([t1, nt])
+    labels = torch.cat([l1, nl])
+    if tile == 192:   # val scenes only in 192px batches (shapes must match)
+        t2, l2 = scenes_val.sample_batch(N_VAL)
+        tiles = torch.cat([tiles, t2])
+        labels = torch.cat([labels, l2])
     try:
         crops, clab = next(crop_iter)
     except StopIteration:
@@ -96,10 +117,12 @@ for step in range(1, STEPS + 1):
     sched.step()
 
     if step % 50 == 0:
-        print(f"step {step}/{STEPS} crop {crop_loss.item():.4f} scene {scene_loss.item():.4f} "
-              f"(pos px {(labels == 1).sum().item()})", flush=True)
+        print(f"step {step}/{STEPS} tile {tile} crop {crop_loss.item():.4f} "
+              f"scene {scene_loss.item():.4f} (pos px {(labels == 1).sum().item()})", flush=True)
     if step % 250 == 0:
         center_accuracy(net, f"step {step} valid", valid_loader)
 
 torch.save(net.state_dict(), OUT)
-print(f"saved {OUT}")
+torch.save({'model': net.state_dict(), 'opt': opt.state_dict(),
+            'step': start_step + STEPS}, OUT + '.ckpt')
+print(f"saved {OUT} (+ {OUT}.ckpt for resume)")

@@ -15,18 +15,19 @@ UP_MAX_CANDS = 200_000   # cap per-image upscale candidates (score-sorted)
 _net = None
 _backend = 'deep'
 _up = False
+_tag = ''
 
 
-def _init(model_path, backend, up):
-    global _net, _backend, _up
+def _init(model_path, backend, up, tag):
+    global _net, _backend, _up, _tag
     torch.set_num_threads(1)
     from deepface.models import load_model
     _net, _ = load_model(model_path)
-    _backend, _up = backend, up
+    _backend, _up, _tag = backend, up, tag
 
 
-def cand_dir(backend, up):
-    return os.path.join(CAND_DIR, backend + ('_up' if up else ''))
+def cand_dir(backend, up, tag=''):
+    return os.path.join(CAND_DIR, backend + (f'_{tag}' if tag else '') + ('_up' if up else ''))
 
 
 def _scan_one(rel):
@@ -43,7 +44,7 @@ def _scan_one(rel):
     if len(cands):
         cands = cands[cands[:, 4].argsort(descending=True)][:UP_MAX_CANDS]
     torch.save(cands.float(),
-               os.path.join(cand_dir(_backend, _up), rel.replace('/', '__') + '.pt'))
+               os.path.join(cand_dir(_backend, _up, _tag), rel.replace('/', '__') + '.pt'))
     return rel, len(cands)
 
 
@@ -57,7 +58,7 @@ def sample_rels(rels, k):
     return out
 
 
-def scan(model_path, backend, limit, workers, sample, up):
+def scan(model_path, backend, limit, workers, sample, up, tag=''):
     from concurrent.futures import ProcessPoolExecutor
     from deepface.evaluate import load_val_gt
     rels, _, _ = load_val_gt()
@@ -65,17 +66,17 @@ def scan(model_path, backend, limit, workers, sample, up):
         rels = sample_rels(rels, sample)
     if limit:
         rels = rels[:limit]
-    out_dir = cand_dir(backend, up)
+    out_dir = cand_dir(backend, up, tag)
     os.makedirs(out_dir, exist_ok=True)
     todo = [r for r in rels
             if not os.path.exists(os.path.join(out_dir, r.replace('/', '__') + '.pt'))]
     print(f"{len(rels)} images, {len(todo)} to scan "
-          f"(backend={backend}, up={up}, workers={workers})")
+          f"(backend={backend}, up={up}, tag={tag or '-'}, workers={workers})")
     t0 = time.time()
     done = 0
     if workers > 1:
         with ProcessPoolExecutor(max_workers=workers,
-                                 initializer=_init, initargs=(model_path, backend, up)) as ex:
+                                 initializer=_init, initargs=(model_path, backend, up, tag)) as ex:
             for rel, n in ex.map(_scan_one, todo, chunksize=4):
                 done += 1
                 if done % 20 == 0:
@@ -83,7 +84,7 @@ def scan(model_path, backend, limit, workers, sample, up):
                     print(f"{done}/{len(todo)}  {rate:.2f} img/s  "
                           f"eta {(len(todo) - done) / rate / 60:.0f} min", flush=True)
     else:
-        _init(model_path, backend, up)
+        _init(model_path, backend, up, tag)
         for rel in todo:
             _scan_one(rel)
             done += 1
@@ -94,13 +95,14 @@ def scan(model_path, backend, limit, workers, sample, up):
     print(f"scan done: {done} images in {(time.time() - t0) / 60:.1f} min")
 
 
-def load_dets(backend, rels, nms='std', floor=None, up=False):
+def load_dets(backend, rels, nms='std', floor=None, up=False, tag=''):
     """Final detector outputs: cached per image; built from raw candidates with
     cluster_nms at the candidate floor on first use. up=True merges the upscale
     pyramid candidates."""
     from deepface.detect import BACKENDS, cluster_nms
     floor = BACKENDS[backend]['floor'] if floor is None else floor
-    det_dir = os.path.join(DET_DIR, f'{backend}_{nms}{floor}' + ('_up' if up else ''))
+    det_dir = os.path.join(DET_DIR, f'{backend}_{nms}{floor}' + (f'_{tag}' if tag else '')
+                           + ('_up' if up else ''))
     os.makedirs(det_dir, exist_ok=True)
     dets = {}
     for rel in rels:
@@ -109,12 +111,12 @@ def load_dets(backend, rels, nms='std', floor=None, up=False):
         if os.path.exists(det_path):
             dets[rel] = torch.load(det_path, weights_only=True).numpy()
             continue
-        cand_path = os.path.join(cand_dir(backend, False), fn)
+        cand_path = os.path.join(cand_dir(backend, False, tag), fn)
         if not os.path.exists(cand_path):
             continue
         cands = torch.load(cand_path, weights_only=True)
         if up:
-            up_path = os.path.join(cand_dir(backend, True), fn)
+            up_path = os.path.join(cand_dir(backend, True, tag), fn)
             if os.path.exists(up_path):
                 cands = torch.cat([cands, torch.load(up_path, weights_only=True)])
         if len(cands):
@@ -125,15 +127,16 @@ def load_dets(backend, rels, nms='std', floor=None, up=False):
     return dets
 
 
-def report(backend, subset, nms, floor, up, sample):
+def report(backend, subset, nms, floor, up, sample, tag=''):
     from deepface.detect import BACKENDS
     from deepface.evaluate import load_val_gt, wider_ap
     rels, boxes, tier_masks = load_val_gt()
     if sample:
         rels = sample_rels(rels, sample)
-    dets = load_dets(backend, rels, nms, floor, up)
+    dets = load_dets(backend, rels, nms, floor, up, tag)
     print(f"loaded detections for {len(dets)}/{len(rels)} images "
-          f"(nms={nms}, floor={BACKENDS[backend]['floor'] if floor is None else floor}, up={up})")
+          f"(nms={nms}, floor={BACKENDS[backend]['floor'] if floor is None else floor}, "
+          f"up={up}, tag={tag or '-'})")
     if subset:
         rels = sorted(dets)
     results = wider_ap(dets, rels=rels)
@@ -145,7 +148,7 @@ def report(backend, subset, nms, floor, up, sample):
         thr_n = (BACKENDS[backend]['thr'] - all_s.min()) / max(all_s.max() - all_s.min(), 1e-9)
         i = int(np.abs(grid - thr_n).argmin())
         print(f"{tier:<8}{ap:<8.4f}{prec[i]:<10.4f}{rec[i]:<10.4f}")
-    np.savez(os.path.join(DET_DIR, f'pr_{backend}_{nms}{"_up" if up else ""}.npz'),
+    np.savez(os.path.join(DET_DIR, f'pr_{backend}_{nms}{f"_{tag}" if tag else ""}{"_up" if up else ""}.npz'),
              **{tier: np.stack([p, r]) for tier, (_, p, r) in results.items()})
 
 
@@ -164,11 +167,12 @@ if __name__ == '__main__':
     backend = _opt('--backend', 'deep')
     up = '--up' in args
     sample = int(_opt('--sample', 0))
+    tag = _opt('--tag', '')
     if cmd == 'scan':
         scan(_opt('--model', 'models/model_deep.pth'), backend,
-             int(_opt('--limit', 0)), int(_opt('--workers', '7')), sample, up)
+             int(_opt('--limit', 0)), int(_opt('--workers', '7')), sample, up, tag)
     elif cmd == 'ap':
         floor = _opt('--floor', None)
         report(backend, subset='--subset' in args,
                nms=_opt('--nms', 'std'), floor=float(floor) if floor else None,
-               up=up, sample=sample)
+               up=up, sample=sample, tag=tag)

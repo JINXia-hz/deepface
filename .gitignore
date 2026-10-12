@@ -1,7 +1,6 @@
 __pycache__/
 train_images/
 test_images/
-*.png
-*.jpg
+samples/
 data/
 outputs/
