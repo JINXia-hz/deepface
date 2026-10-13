@@ -19,7 +19,7 @@ import torch
 from deepface.detect import cluster_nms
 from deepface.evaluate import load_val_gt, wider_ap
 from tools.eval_wider import sample_rels
-from tools.level_redundancy import load_cands, iou_matrix
+from tools.level_redundancy import iou_matrix, load_cands
 
 
 def interp_dets(c, levels, mode):
@@ -35,7 +35,7 @@ def interp_dets(c, levels, mode):
     out = det.copy()
     for i, d in enumerate(det):
         size = d[2] - d[0]
-        k = int(round(np.log(size / 36) / np.log(1.1)))
+        k = round(np.log(size / 36) / np.log(1.1))
         pts = [(0.0, d[4])]
         for dk in (-2, 2):
             m = le == k + dk

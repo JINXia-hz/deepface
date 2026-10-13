@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torchvision.transforms as transforms
 from PIL import Image
+from torchvision import transforms
 
 GRAY = transforms.Compose([
     transforms.Grayscale(),
@@ -15,10 +15,10 @@ DOWNSAMPLE = 8       # Net: 3 maxpools
 
 # per-backend defaults: detection threshold, pyramid ratio, candidate-cache floor
 BACKENDS = {
-    'heatmap': dict(thr=0.995, ratio=1.05, floor=0.85),
+    'heatmap': {'thr': 0.995, 'ratio': 1.05, 'floor': 0.85},
     # 1.21 = every other level of the old 1.1 ladder: -0.02 AP for ~2x speed
     # (measured in tools/level_redundancy.py; the [26,52] band is 2x wide)
-    'deep': dict(thr=0.85, ratio=1.21, floor=0.05),
+    'deep': {'thr': 0.85, 'ratio': 1.21, 'floor': 0.05},
 }
 
 # box shape calibration (w-scale, h-scale, dy in box-side units): WIDER faces
@@ -242,7 +242,7 @@ def scale_refine(det, cands, ratio):
     for i in range(len(out)):
         d = out[i].numpy()
         size = max(d[2] - d[0], 1e-6)
-        k = int(round(np.log(size / WINDOW) / np.log(ratio)))
+        k = round(np.log(size / WINDOW) / np.log(ratio))
         pts = [(0.0, float(d[4]))]
         for dk in (-1, 1):
             m = levels == k + dk

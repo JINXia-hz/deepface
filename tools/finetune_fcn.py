@@ -5,12 +5,12 @@ import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torch.optim as optim
+from torch import optim
 
 from deepface.data import get_data_loaders
 from deepface.evaluate import evaluate
 from deepface.models import Net
-from deepface.wider import SceneSampler, NegativeSampler
+from deepface.wider import NegativeSampler, SceneSampler
 
 torch.set_num_threads(os.cpu_count() or 1)
 

@@ -5,12 +5,12 @@ import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torch.optim as optim
+from torch import optim
 
 from deepface.data import get_data_loaders
 from deepface.evaluate import center_accuracy
 from deepface.models import ResUNet
-from deepface.wider import DeepSceneSampler, DeepNegativeSampler
+from deepface.wider import DeepNegativeSampler, DeepSceneSampler
 
 torch.set_num_threads(os.cpu_count() or 1)
 

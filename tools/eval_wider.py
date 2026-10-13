@@ -32,6 +32,7 @@ def cand_dir(backend, up, tag=''):
 
 def _scan_one(rel):
     from PIL import Image
+
     from deepface.detect import BACKENDS, SCANNERS
     cfg = BACKENDS[_backend]
     img = Image.open(os.path.join(WIDER_VAL_IMG, rel))
@@ -60,6 +61,7 @@ def sample_rels(rels, k):
 
 def scan(model_path, backend, limit, workers, sample, up, tag=''):
     from concurrent.futures import ProcessPoolExecutor
+
     from deepface.evaluate import load_val_gt
     rels, _, _ = load_val_gt()
     if sample:
@@ -130,7 +132,7 @@ def load_dets(backend, rels, nms='std', floor=None, up=False, tag=''):
 def report(backend, subset, nms, floor, up, sample, tag=''):
     from deepface.detect import BACKENDS
     from deepface.evaluate import load_val_gt, wider_ap
-    rels, boxes, tier_masks = load_val_gt()
+    rels, _boxes, _tier_masks = load_val_gt()
     if sample:
         rels = sample_rels(rels, sample)
     dets = load_dets(backend, rels, nms, floor, up, tag)
@@ -141,11 +143,12 @@ def report(backend, subset, nms, floor, up, sample, tag=''):
         rels = sorted(dets)
     results = wider_ap(dets, rels=rels)
     grid = 1 - np.arange(1, 1001) / 1000
-    print(f"{'tier':<8}{'AP':<8}{f'P@{BACKENDS[backend]['thr']}':<10}{'R':<10}")
+    def_thr = BACKENDS[backend]['thr']
+    print(f"{'tier':<8}{'AP':<8}{f'P@{def_thr}':<10}{'R':<10}")
     for tier, (ap, prec, rec) in sorted(results.items()):
         # operating point: grid row nearest the backend's default (normalized) thr
         all_s = np.concatenate([d[:, 4] for d in dets.values() if len(d)])
-        thr_n = (BACKENDS[backend]['thr'] - all_s.min()) / max(all_s.max() - all_s.min(), 1e-9)
+        thr_n = (def_thr - all_s.min()) / max(all_s.max() - all_s.min(), 1e-9)
         i = int(np.abs(grid - thr_n).argmin())
         print(f"{tier:<8}{ap:<8.4f}{prec[i]:<10.4f}{rec[i]:<10.4f}")
     np.savez(os.path.join(DET_DIR, f'pr_{backend}_{nms}{f"_{tag}" if tag else ""}{"_up" if up else ""}.npz'),

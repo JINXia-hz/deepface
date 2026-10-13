@@ -11,12 +11,13 @@ Usage: py -m tools.level_redundancy [n_images_for_12]
 """
 import os
 import sys
+
 import numpy as np
 import torch
 
 from deepface.detect import cluster_nms
 from deepface.evaluate import load_val_gt, wider_ap
-from tools.eval_wider import sample_rels, cand_dir
+from tools.eval_wider import cand_dir, sample_rels
 
 
 def load_cands(rel):

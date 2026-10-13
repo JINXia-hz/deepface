@@ -2,12 +2,11 @@ import os
 import sys
 
 import torch
-import torch.optim as optim
-import torch.nn as nn
+from torch import nn, optim
 
 from deepface.data import get_data_loaders
-from deepface.models import Net
 from deepface.evaluate import evaluate
+from deepface.models import Net
 
 torch.set_num_threads(os.cpu_count() or 1)
 

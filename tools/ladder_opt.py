@@ -17,7 +17,7 @@ import torch
 from deepface.detect import cluster_nms
 from deepface.evaluate import load_val_gt, wider_ap
 from tools.eval_wider import sample_rels
-from tools.level_redundancy import load_cands, iou_matrix
+from tools.level_redundancy import iou_matrix, load_cands
 from tools.level_support import match_gt
 
 RATIO = 1.1
@@ -45,7 +45,7 @@ def collect_stats(rels, boxes, valid):
             if tp != 0:
                 continue
             size = d[2] - d[0]
-            k = int(round(np.log(size / 36) / np.log(RATIO)))
+            k = round(np.log(size / 36) / np.log(RATIO))
             if not (0 <= k < N_LEVELS):
                 continue
             rho[k] += 1
@@ -84,7 +84,7 @@ def optimize_ladder(rho, kappa, budget, n_levels=N_LEVELS):
         for j in range(i + 1, n_levels):
             ks = np.arange(i + 1, j)
             L[i, j] = (w[i + 1:j] * np.minimum(ks - i, j - ks) ** 2).sum()
-    B = int(round(budget / cost[-1]))     # quantize by cheapest level
+    B = round(budget / cost[-1])            # quantize by cheapest level
     c_q = np.maximum(np.round(cost / cost[-1]).astype(int), 1)
     INF = 1e18
     dp = np.full((n_levels, B + 1), INF)
@@ -101,7 +101,6 @@ def optimize_ladder(rho, kappa, budget, n_levels=N_LEVELS):
             cand = dp[i, :B + 1 - c_q[j]] + L[i, j]
             tgt = dp[j, c_q[j]:]
             better = cand < tgt[:len(cand)]
-            idx = np.nonzero(better)[0]
             tgt[:len(cand)][better] = cand[better]
             par[j, c_q[j]:len(cand) + c_q[j]][better] = i
     j = n_levels - 1
@@ -131,7 +130,7 @@ def ladder_dets(c, levels, kept, interp):
     out = det.copy()
     for i, d in enumerate(det):
         size = d[2] - d[0]
-        k = int(round(np.log(size / 36) / np.log(RATIO)))
+        k = round(np.log(size / 36) / np.log(RATIO))
         below = kept_arr[kept_arr < k]
         above = kept_arr[kept_arr > k]
         if len(below) == 0 or len(above) == 0:

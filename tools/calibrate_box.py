@@ -1,7 +1,5 @@
 import sys
 
-import numpy as np
-
 from deepface.evaluate import load_val_gt, wider_ap
 from tools.eval_wider import load_dets
 

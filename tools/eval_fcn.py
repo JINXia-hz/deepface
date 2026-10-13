@@ -6,7 +6,7 @@ from PIL import Image
 
 from deepface.data import get_data_loaders
 from deepface.detect import detect
-from deepface.evaluate import evaluate, center_accuracy, wider_recall, eval_jobs
+from deepface.evaluate import center_accuracy, eval_jobs, evaluate, wider_recall
 from deepface.models import load_model
 
 torch.set_num_threads(os.cpu_count() or 1)

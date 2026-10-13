@@ -20,7 +20,7 @@ import torch
 from deepface.detect import cluster_nms
 from deepface.evaluate import load_val_gt, wider_ap
 from tools.eval_wider import sample_rels
-from tools.level_redundancy import load_cands, iou_matrix
+from tools.level_redundancy import iou_matrix, load_cands
 
 SUPPORT_THR = 0.3   # supporting candidate must clear this score
 
@@ -138,9 +138,9 @@ def main():
     def ap_of(rule, name):
         out = {}
         off = 0
-        for rel in dets_cache:
-            n = len(dets_cache[rel])
-            out[rel] = rule(dets_cache[rel], sup[off:off + n])
+        for rel, dets in dets_cache.items():
+            n = len(dets)
+            out[rel] = rule(dets, sup[off:off + n])
             off += n
         res = wider_ap(out, rels=list(out))
         line = '  '.join(f'{t}={res[t][0]:.4f}' for t in sorted(res))

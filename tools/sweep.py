@@ -27,7 +27,7 @@ def main(cache_paths, thresholds, methods):
         print(f"{'method':<10}{'thr':<8}{'holdoutFP':<12}{'widerRecall':<13}samples")
         for method in methods:
             for thr in thresholds:
-                def det_fn(img_path, m=method, t=thr):
+                def det_fn(img_path, m=method, t=thr, data=data):
                     return cluster_nms(data.get(('wider', img_path), torch.zeros(0, 5)),
                                        t, m, G=G)
 

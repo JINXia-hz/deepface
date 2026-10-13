@@ -37,11 +37,23 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── model_fcn2.pth  # FCN fine-tuned on WIDER train+val scenes, 3000 steps
 │   └── model_deep.pth  # ResUNet default detector (v1 2000 steps + 4000-step continuation)
 ├── data/               # Scene data (git-ignored): COCO val2017, no_person, holdout, widerface
-├── train_images/       # Training set (0=non-face, 1=face, 36×36)
-├── test_images/        # Test set
+├── train_images/       # Training set (0=non-face, 1=face, 36×36); git-ignored, restored from crops.tar.gz
+├── test_images/        # Test set; git-ignored, restored from crops.tar.gz
+├── crops.tar.gz        # Packaged crop dataset (train_images/ + test_images/) — download-and-use, no external data hunt
 ├── samples/            # Sample images to detect on
 └── outputs/            # Detection outputs (<name>_<n>faces.png), cache/ for candidate caches
 ```
+
+## Setup
+
+```bash
+pip install -r requirements.txt   # runtime deps: torch, torchvision, numpy, scipy, pillow
+tar -xzf crops.tar.gz             # restore the crop dataset (train_images/ + test_images/)
+```
+
+`crops.tar.gz` (~110 MB) is committed in the repo root via **Git LFS** and packages the full 36×36 grayscale crop dataset — `train_images/` (64771 faces, 26951 non-faces) and `test_images/` (798 / 6832) — so the repo works right after download. If `crops.tar.gz` shows up as a tiny text file after cloning, install Git LFS and run `git lfs pull` to fetch the real archive. The two directories are git-ignored and restored by extracting the archive. Scene data under `data/` (COCO val2017, no_person, holdout, WIDER FACE) is not included; download it separately to run the scene-level tools (`train_deep`, `eval_wider`, ...).
+
+For development, `pip install -r requirements-dev.txt` (ruff + mypy); CI runs `ruff check deepface tools` and `mypy deepface tools` on every push/PR.
 
 ## Usage
 

@@ -4,9 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 import torchvision
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.sampler import SubsetRandomSampler
 from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.sampler import SubsetRandomSampler
 
 
 def _read_image(path):

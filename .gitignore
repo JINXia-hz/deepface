@@ -1,4 +1,14 @@
 __pycache__/
+*.py[cod]
+
+# lint tool caches
+.mypy_cache/
+.ruff_cache/
+
+# local environments
+.venv/
+
+# data and artifacts
 train_images/
 test_images/
 samples/

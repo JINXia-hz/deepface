@@ -20,8 +20,8 @@ import torch
 
 from deepface.evaluate import load_val_gt, wider_ap
 from tools.eval_wider import sample_rels
-from tools.level_redundancy import load_cands, iou_matrix
-from tools.level_support import nms_with_support, match_gt
+from tools.level_redundancy import iou_matrix, load_cands
+from tools.level_support import match_gt, nms_with_support
 
 DELTAS = (-2, -1, 1, 2)
 
