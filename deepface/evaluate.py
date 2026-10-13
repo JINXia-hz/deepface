@@ -18,11 +18,13 @@ def evaluate(net, tag, loader):
     """Crop-level classification metrics for the heatmap backend (Net)."""
     was_training = net.training
     net.eval()
+    device = next(net.parameters()).device
     correct = 0
     total = 0
     TP = TN = FP = FN = 0
     with torch.no_grad():
         for inputs, labels in loader:
+            inputs, labels = inputs.to(device), labels.to(device)
             outputs = net(inputs)
             predicted = torch.argmax(outputs, dim=1)
             correct += (predicted == labels).sum().item()
@@ -43,11 +45,12 @@ def center_accuracy(net, tag, loader):
     crop by the sigmoid score at the center pixel."""
     was_training = net.training
     net.eval()
+    device = next(net.parameters()).device
     correct = total = 0
     with torch.no_grad():
         for x, y in loader:
-            s = torch.sigmoid(net(x)).squeeze(1)
-            correct += ((s[:, 18, 18] > 0.5).long() == y).sum().item()
+            s = torch.sigmoid(net(x.to(device))).squeeze(1)
+            correct += ((s[:, 18, 18] > 0.5).long() == y.to(device)).sum().item()
             total += len(y)
     print(f"[{tag}] center-acc: {correct / max(total, 1):.4f}")
     if was_training:

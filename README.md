@@ -19,7 +19,7 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 │   ├── test_cnn.py         # Evaluate the small CNN on the test set
 │   ├── export_mistakes.py  # Export a grid of misclassified test samples to outputs/
 │   ├── finetune_fcn.py     # FCN fine-tuning: <steps> <lambda> <out> <seed>
-│   ├── train_deep.py       # ResUNet training from scratch: <steps> <lambda> <out> <seed>
+│   ├── train_deep.py       # ResUNet training: <steps> <lambda> <out> <seed> [init] [tiles] [lr] [device] [batch]
 │   ├── eval_fcn.py         # Full evaluation (test crops / holdout FPs / samples / WIDER recall)
 │   ├── cache_candidates.py # Cache low-threshold candidates: <model> <out.pt>
 │   ├── sweep.py            # Threshold × NMS sweep on cached candidates
@@ -40,6 +40,7 @@ All shared logic lives in the `deepface/` package; runnable scripts live in `too
 ├── train_images/       # Training set (0=non-face, 1=face, 36×36); git-ignored, restored from crops.tar.gz
 ├── test_images/        # Test set; git-ignored, restored from crops.tar.gz
 ├── crops.tar.gz        # Packaged crop dataset (train_images/ + test_images/) — download-and-use, no external data hunt
+├── colab_train.ipynb   # Google Colab GPU training notebook (free-tier T4, checkpoints to Drive)
 ├── samples/            # Sample images to detect on
 └── outputs/            # Detection outputs (<name>_<n>faces.png), cache/ for candidate caches
 ```
@@ -54,6 +55,8 @@ tar -xzf crops.tar.gz             # restore the crop dataset (train_images/ + te
 `crops.tar.gz` (~110 MB) is committed in the repo root via **Git LFS** and packages the full 36×36 grayscale crop dataset — `train_images/` (64771 faces, 26951 non-faces) and `test_images/` (798 / 6832) — so the repo works right after download. If `crops.tar.gz` shows up as a tiny text file after cloning, install Git LFS and run `git lfs pull` to fetch the real archive. The two directories are git-ignored and restored by extracting the archive. Scene data under `data/` (COCO val2017, no_person, holdout, WIDER FACE) is not included; download it separately to run the scene-level tools (`train_deep`, `eval_wider`, ...).
 
 For development, `pip install -r requirements-dev.txt` (ruff + mypy); CI runs `ruff check deepface tools` and `mypy deepface tools` on every push/PR.
+
+Training is CPU-only by default but supports GPU (`device` arg, `auto` by default): for a laptop-free long run, open `colab_train.ipynb` on Google Colab (free-tier T4 works) — it stages the data from Google Drive, trains with bf16 autocast, and checkpoints to Drive every 500 steps so a disconnected session can resume.
 
 ## Usage
 

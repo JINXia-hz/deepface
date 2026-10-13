@@ -12,8 +12,6 @@ from deepface.evaluate import center_accuracy
 from deepface.models import ResUNet
 from deepface.wider import DeepNegativeSampler, DeepSceneSampler
 
-torch.set_num_threads(os.cpu_count() or 1)
-
 STEPS = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
 LAMBDA = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
 OUT = sys.argv[3] if len(sys.argv) > 3 else 'models/model_deep.pth'
@@ -21,15 +19,28 @@ SEED = int(sys.argv[4]) if len(sys.argv) > 4 else 0
 INIT = sys.argv[5] if len(sys.argv) > 5 else None   # .ckpt or bare .pth to resume from
 TILES = [int(t) for t in (sys.argv[6] if len(sys.argv) > 6 else '192').split(',')]
 LR = float(sys.argv[7]) if len(sys.argv) > 7 else 1e-3
+DEVICE = sys.argv[8] if len(sys.argv) > 8 else 'auto'   # auto | cuda | cpu
+BATCH = sys.argv[9] if len(sys.argv) > 9 else '10,4'    # scene tiles, negative tiles
 # tile sizes alternated per step; '192,96' mixes small tiles (mimics deep pyramid
 # inputs) but that variant ('B') regressed precision — default is 192 only
-N_TRAIN, N_VAL, N_NEG = 10, 2, 4
+N_TRAIN, N_NEG = (int(x) for x in BATCH.split(','))
+N_VAL = 2
+CKPT_EVERY = 500   # periodic checkpoint: an interrupted (Colab) run loses little
+
+if DEVICE == 'auto':
+    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = torch.device(DEVICE)
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True   # fixed input shapes
+    print(f'training on GPU: {torch.cuda.get_device_name(0)}')
+else:
+    torch.set_num_threads(os.cpu_count() or 1)
 
 torch.manual_seed(SEED)
 random.seed(SEED)
 np.random.seed(SEED)
 
-net = ResUNet(in_channels=1, out_channels=1)
+net = ResUNet(in_channels=1, out_channels=1).to(device)
 net.train()  # trained from scratch: BN learns its running stats
 
 train_loader, valid_loader, _ = get_data_loaders(batch_size=128, valid_size=0.2)
@@ -79,7 +90,7 @@ sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=STEPS, eta_min=LR / 10)
 
 start_step = 0
 if INIT:
-    ck = torch.load(INIT, weights_only=False)
+    ck = torch.load(INIT, weights_only=False, map_location=device)
     if isinstance(ck, dict) and 'model' in ck:   # full checkpoint with optimizer
         net.load_state_dict(ck['model'])
         opt.load_state_dict(ck['opt'])
@@ -91,12 +102,20 @@ if INIT:
         print(f"warm-started weights from {INIT} (fresh optimizer); "
               f"cosine over {STEPS} steps")
 
+
+def save_ckpt(net, opt, step):
+    """Resume checkpoint: model weights CPU-ified (loadable anywhere), optimizer
+    state kept on-device (resume loads it with map_location)."""
+    torch.save({'model': {k: v.detach().cpu() for k, v in net.state_dict().items()},
+                'opt': opt.state_dict(), 'step': step}, OUT + '.ckpt')
+
+
 for step in range(1, STEPS + 1):
     tile = TILES[step % len(TILES)]
     t1, l1 = scenes_train[tile].sample_batch(N_TRAIN)
     nt, nl = neg_scenes[tile].sample_batch(N_NEG)
-    tiles = torch.cat([t1, nt])
-    labels = torch.cat([l1, nl])
+    tiles = torch.cat([t1, nt]).to(device)
+    labels = torch.cat([l1, nl]).to(device)
     if tile == 192:   # val scenes only in 192px batches (shapes must match)
         t2, l2 = scenes_val.sample_batch(N_VAL)
         tiles = torch.cat([tiles, t2])
@@ -107,8 +126,9 @@ for step in range(1, STEPS + 1):
         crop_iter = iter(train_loader)
         crops, clab = next(crop_iter)
 
-    scene_loss = focal_loss(net(tiles), labels)
-    crop_loss = focal_loss(net(crops), crop_labels(clab))
+    with torch.autocast('cuda', dtype=torch.bfloat16, enabled=device.type == 'cuda'):
+        scene_loss = focal_loss(net(tiles), labels)
+        crop_loss = focal_loss(net(crops.to(device)), crop_labels(clab).to(device))
 
     loss = crop_loss + LAMBDA * scene_loss
     opt.zero_grad()
@@ -121,8 +141,10 @@ for step in range(1, STEPS + 1):
               f"scene {scene_loss.item():.4f} (pos px {(labels == 1).sum().item()})", flush=True)
     if step % 250 == 0:
         center_accuracy(net, f"step {step} valid", valid_loader)
+    if step % CKPT_EVERY == 0 or step == STEPS:
+        save_ckpt(net, opt, start_step + step)
 
-torch.save(net.state_dict(), OUT)
-torch.save({'model': net.state_dict(), 'opt': opt.state_dict(),
-            'step': start_step + STEPS}, OUT + '.ckpt')
+# model weights are saved CPU-ified so the .pth also loads on CPU-only machines
+torch.save({k: v.detach().cpu() for k, v in net.state_dict().items()}, OUT)
+save_ckpt(net, opt, start_step + STEPS)
 print(f"saved {OUT} (+ {OUT}.ckpt for resume)")
