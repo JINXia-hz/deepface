@@ -1,16 +1,27 @@
 __pycache__/
 *.py[cod]
 
-# lint tool caches
+# tool caches
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
 
-# local environments
+# local environments and editors
 .venv/
+.vscode/
+.idea/
 
-# data and artifacts
+# local documentation
+docs/
+
+# data and runtime artifacts
 train_images/
 test_images/
 samples/
 data/
 outputs/
+
+# local training experiments
+models/*.ckpt
+models/model_deep_reg*.pth
+tools/recalibrate_bn.py

@@ -264,8 +264,8 @@ def scale_refine(det, cands, ratio):
         if a >= 0:
             continue
         x_star = float(np.clip(-b / (2 * a), -1, 1))
-        cx, cy = (d[0] + d[2]) / 2, (d[1] + d[3]) / 2
-        new_size = WINDOW * ratio ** (k + x_star)
+        cx, cy = float((d[0] + d[2]) / 2), float((d[1] + d[3]) / 2)
+        new_size = float(WINDOW * ratio ** (k + x_star))
         out[i, 0], out[i, 1] = cx - new_size / 2, cy - new_size / 2
         out[i, 2], out[i, 3] = cx + new_size / 2, cy + new_size / 2
     return out

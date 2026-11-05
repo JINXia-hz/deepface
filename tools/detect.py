@@ -20,6 +20,7 @@ def main():
     for x1, y1, x2, y2, _ in boxes:
         draw.rectangle([x1, y1, x2, y2], outline='red', width=2)
     name = os.path.splitext(os.path.basename(img_path))[0]
+    os.makedirs('outputs', exist_ok=True)
     img.save(f'outputs/{name}_{len(boxes)}faces.png')
     print(f"[{backend}] detected {len(boxes)} faces -> outputs/{name}_{len(boxes)}faces.png")
 

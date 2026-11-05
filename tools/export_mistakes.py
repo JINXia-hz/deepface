@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torchvision.utils
 
@@ -11,6 +13,7 @@ def save_grid(images, path, nrow):
 
 
 def main():
+    os.makedirs('outputs', exist_ok=True)
     _, _, test_loader = get_data_loaders(batch_size=128)
     net = Net()
     net.load_state_dict(torch.load('models/model_noeq.pth', weights_only=True))
